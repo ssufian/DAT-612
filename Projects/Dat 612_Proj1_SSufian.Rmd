@@ -1,0 +1,220 @@
+---
+title: "DAT 612 - Project 1"
+author: "sufian"
+date: "6/1/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Project Description
+
+- This system recommends movies to viewers (users)
+
+- We will utilzed the Baseline Predictor Methodology which = Avg Mean + User Bias + Movie Bias
+
+- A small toy sample data set was created for this exercise:  6 users spanning 5 movies were given ratings arbitrarily
+
+- Toy sample data set were partion into a Training & Testing set respectively 
+
+------------------------------------------------------------------------------------------------------------------
+
+\clearpage
+
+# Loading Libraries
+
+------------------------------------------------------------------------------------------------------------------
+
+\clearpage
+
+```{r ,message=FALSE, warning=FALSE}
+library(Matrix)
+library(reshape2)
+library(data.table)
+library(tidyr)
+library(dplyr)
+library(kableExtra)
+library("scales")
+```
+
+## Loading Dataframe
+
+```{r}
+url1 <- "https://raw.githubusercontent.com/ssufian/DAT-612/master/Projects/movie_rating.csv"
+
+mydata <- read.csv(file=url1, sep=",",na.strings = c("NA","",""),strip.white = T, stringsAsFactors = F, header=T)
+# Make sure the 1st column is a factor
+mydata$MovieID<- factor(mydata$MovieID)
+
+head(mydata)# Original Table in Long format
+
+```
+
+## Create a user-item matrix
+
+```{r}
+#Casting long format data to wide format
+UIMatrix <- acast(mydata, UserID~MovieID, value.var="Rating")
+UIMatrix  <- apply(UIMatrix , 2,as.numeric) 
+
+# Original user-movie matrix 
+set.seed(12)
+kable(UIMatrix, format = "pandoc", digits = 3,align= "c",caption = "Fig1a: Original User-Movie Matrix",font_size=12) 
+#SplitRatio for 70%:30% splitting
+UIMatrix1<-sort(sample(nrow(UIMatrix), nrow(UIMatrix)*.7))
+
+#subsetting into Train data
+train <- UIMatrix[UIMatrix1,]
+# Train user-movie matrix 
+kable(train, format = "pandoc", digits = 3,align= "c",caption = "Fig1b: User-Movie Train Matrix",font_size=12) 
+#subsetting into Test data
+test<-UIMatrix[-UIMatrix1,]
+# Test user-movie matrix 
+kable(test, format = "pandoc", digits = 3,align= "c",caption = "Fig1c: User-Movie Test Matrix",font_size=12) 
+```
+
+## Obtain the raw average (mean) rating for every user-item combination from the training dataset
+
+```{r}
+# calculating the mean of all numberical entries in training dataset
+
+raw_avg<-apply(train, 2, mean, na.rm = TRUE) %>% mean()
+raw_avg
+```
+
+## Calculate the RMSE for raw average before Bias
+
+-For both training data and test data
+
+```{r}
+#function to calculate Square Error
+simpleFunc <- function(x)
+{
+  ((x) - raw_avg)^2
+}
+#calculating the RSME of train set
+SE_train<- apply(train,2,simpleFunc)
+M_train <- apply(SE_train, 2, sum, na.rm = TRUE) %>% mean()
+RSME_train <- sqrt(M_train ) 
+sprintf("RSME trainset before bias: %s",format(round(RSME_train, 2), nsmall = 3))
+
+#calculating the RSME of test set
+SE_test<- apply(test,2,simpleFunc)
+M_test <- apply(SE_test, 2, sum, na.rm = TRUE) %>% mean()
+RSME_test <- sqrt(M_test ) 
+sprintf("RSME testset before bias: %s",format(round(RSME_test, 2), nsmall = 3))
+```
+
+## Using your training data, calculate the bias for each user and movie.
+
+```{r}
+#function to calculate Square Error
+simpleFunc1 <- function(x)
+{
+  ((x) - raw_avg)
+}
+
+#User Bias
+User_Bias1 <- apply(train, 1, mean,na.rm = TRUE) 
+User_Bias<- sapply(User_Bias1,simpleFunc1)
+
+#Movie Bias
+movie_Bias1 <- apply(train, 2, mean,na.rm = TRUE) 
+movie_Bias<- sapply(movie_Bias1,simpleFunc1)
+
+User_Bias
+movie_Bias
+```
+
+## Calculate the baseline predictors for every user-item combination.
+
+- Train Dataset
+- Test Dataset
+```{r}
+#Baselinie Predictor for Train dataset
+#Calculating the baseline predictor (raw average + userBias + movieBias)
+train1a<-train #creating a new train matrix to not mess up the original training set
+for (r in 1:nrow(train1a))   
+    for (c in 1:ncol(train1a))  
+         train1a[r,c]<-raw_avg+User_Bias[[r]]+movie_Bias[[c]]
+
+kable(train1a, format = "pandoc", digits = 3,align= "c",caption = "Fig2a: Baseline Train set w/o clippings",font_size=12) 
+
+#Baselinie Predictor for Test dataset
+
+test1b<-test #creating a new testmatrix to not mess up the original testing set
+for (r in 1:nrow(test1b))   
+    for (c in 1:ncol(test1b))  
+         test1b[r,c]<-raw_avg+User_Bias[[r]]+movie_Bias[[c]]
+
+kable(test1b, format = "pandoc", digits = 3,align= "c",caption = "Fig2b: Baseline Test set w/o clippings",font_size=12) 
+
+```
+
+# Clipping baseline predictors
+
+-our movie ratings cannot be below 1 and above 5
+
+```{r}
+#Clipped baseline predictors for Train Dataset
+train1a[train1a<1]<-1
+train1a[train1a>5]<-5
+
+kable(train1a, format = "pandoc", digits = 3,align= "c",caption = "Fig3a: Baseline Train set w/ clippings",font_size=12) 
+
+#Clipped baseline predictors for TestDataset
+test1b[test1b<1]<-1
+test1b[test1b>5]<-5
+
+kable(test1b, format = "pandoc", digits = 3,align= "c",caption = "Fig3b: Baseline Test set w/ clippings",font_size=12)
+```
+
+# RMSE after Bias
+
+- Training dataset 
+- Testing dataset 
+
+```{r}
+#calculating the RSME of train set
+SE_train_afterbias<- apply(train1a,2,simpleFunc)
+M_train_afterbias <- apply(SE_train_afterbias, 2, sum, na.rm = TRUE) %>% mean()
+RSME_train_afterbias <- sqrt(M_train_afterbias) 
+sprintf("RSME trainset after bias: %s",format(round(RSME_train_afterbias, 2), nsmall = 3))
+
+#calculating the RSME of test set
+SE_test_afterbias<- apply(test1b,2,simpleFunc)
+M_test_afterbias <- apply(SE_test_afterbias, 2, sum, na.rm = TRUE) %>% mean()
+RSME_test_afterbias <- sqrt(M_test_afterbias ) 
+sprintf("RSME testset after bias: %s",format(round(RSME_test_afterbias, 2), nsmall = 3))
+```
+
+# Comparing the Results
+
+- comparing both training and testing RSME 
+
+```{r}
+# Training RSME comparision
+train_comp <- (1-RSME_train_afterbias/RSME_train )
+sprintf("RSME Train Percent: %s",percent(train_comp))
+
+# Testing RSME comparision
+test_comp <- (1-RSME_test_afterbias/RSME_test)
+sprintf("RSME Test Percent: %s",percent(test_comp))
+
+```
+
+------------------------------------------------------------------------------------------------------------------
+
+\clearpage
+
+# Summary of Results
+
+```
+In training set, we saw a -8% deteriation of the RSME post-biasing. While, in the testing set, we witnessed a slight 2% improvment post-biasing.  There are a multitude of reasons for such poor overall performance of which the most probable cause is the very small toy sample size of the Utility Matrix and the lack of trendlines that derived from that.  It is really hard to draw any conclusion based on such a small sample size.  This exercise is simply to allow the student a hands-on practice in creating and understanding how the Baseline Predictor Matrix is formulated for both the training and testing sets.  Lastly, it also allows the student to see how RSME is calculated and utilized as one of the accruacy metrics in Recommender Systems.
+
+```
+------------------------------------------------------------------------------------------------------------------
+
+\clearpage
