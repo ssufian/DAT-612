@@ -1,0 +1,444 @@
+---
+title: "DAT 612 - Project 2"
+author: "sufian"
+date: "6/8/2020"
+output: html_document
+---
+
+------------------------------------------------------------------------------------------------------------------
+
+\clearpage
+
+In Project 2, we implmented 2 different types of Collaborative Filtering systems:
+
+
+(1) User Based Collaborative Filtering Systems (UBCF) 
+
+(2) Item Based Collaborative Filtering Systems (IBCF)
+
+A comparative analysis was then performed on the two different approaches using these different algorithms
+
+Note:  We shall follow the spirit & methodologies as prescribed in Chaper 3 from the book:
+
+"BUILDING_A_RECOMMENDATION_SYSTEM_WITH_R"
+
+Reference:
+
+Movielens Data source was downloaded from Kaggle website: https://www.kaggle.com/prajitdatta/movielens-100k-dataset?
+
+------------------------------------------------------------------------------------------------------------------
+
+\clearpage
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load libraries
+
+```{r ,message=FALSE, warning=FALSE}
+library(Matrix)
+library(reshape2)
+library(data.table)
+library(tidyr)
+library(dplyr)
+library(kableExtra)
+library("scales")
+library("recommenderlab")
+library(tidytext)
+library(psych)
+library(knitr)
+library(ggplot2)
+require(ggthemes)
+
+```
+
+## Loading & Merging 3 separate Data tables 
+
+- source:  https://www.kaggle.com/prajitdatta/movielens-100k-dataset/
+
+```{r}
+url3 <-'https://raw.githubusercontent.com/ssufian/DAT-612/master/u.item.csv'
+
+#User Table contains User (viewers) information
+users <- read.table("https://raw.githubusercontent.com/ssufian/DAT-612/master/u.user.data", sep='')
+colnames(users) <- c('user_id', 'age', 'sex', 'occupation', 'zip_code') #Assign column names
+#u.Data contains Ratings by users and associated movie ID nformation
+ratings <- read.table('https://raw.githubusercontent.com/ssufian/DAT-612/master/u.data', sep='')
+colnames(ratings) <- c('user_id', 'movie_id', 'rating', 'unix_timestamp')
+#u.item (csv file in Github) contains Movie information such as Titles, Movie ID, releae dates and its imdb urls
+movies <- read.csv(file=url3, sep=",",na.strings = c("NA","",""),strip.white = T, stringsAsFactors = F, header=F)
+colnames(movies) <- c('movie_id', 'title', 'release_date', 'imdb_url')
+movie_ratings <- merge(movies, ratings, by="movie_id")
+lens <- merge(movie_ratings, users, by="user_id") %>% select(-c(unix_timestamp,age,sex,occupation,zip_code,imdb_url,release_date))
+
+```
+
+## Creating Utility Matrix
+
+- Using the merged data table called lens
+
+```{r}
+# Convert to matrix
+UIMatrix <- lens %>% spread(title, rating)
+# The utilitiy matrix is really Sparse!  That is why is comented out to Not take up space in Rpubs
+#head(UIMatrix)
+```
+
+Observation 1:
+
+- The Utility Matrix created was very sparse.  In order to save time and implement a collaborative filtering system, we will revert to R's Reccomendrlab and follow the procedures laid out in Chp 3
+
+------------------------------------------------------------------------------------------------------------------
+
+\clearpage
+
+## I: Creating an Item_Item Matrix from ratings table
+
+- Conversion to matrix format in order to Utilize the Reccomenderlabs class
+
+```{r}
+# Making the Item_Item Matrix into Wide Format
+IMatrix <- ratings %>% 
+  select(-unix_timestamp) %>% 
+  spread(movie_id, rating)
+
+```
+
+## Coercing the Item_Item Matrix into a class called "RealRatingMatrix"
+
+```{r}
+IMatrix <- IMatrix[-c(1)]
+#Forcinig the IMatrix to belong to the class called "realRatingMatrix" per Chp 3 
+mMatrix <- as(as.matrix(IMatrix), "realRatingMatrix")
+
+mMatrix
+#checking the class out
+methods(class = class(mMatrix))
+```
+
+Observation 2:
+
+- There are many good reasons why we coerce the Item_Item matrix into the reccommenderlab's class such as using its pre-built functionalites but as the book stated, one of the more important reason is storage efficiency; rating matrices are sparce matrices as witnessed.  For this reason, the realRatingMatrix class, which supports a compact storage of sparse matrices, comes in really handy
+
+------------------------------------------------------------------------------------------------------------------
+
+\clearpage
+
+- Case in point Object size comparision:  Without the reccommenderlab matrix, our regular R matrix would be 10X bigger
+
+```{r}
+object.size(mMatrix)
+object.size(as(mMatrix, "matrix"))
+```
+
+## Exploring the values & range of the raw data: values of original ratings
+
+```{r}
+vector_ratings <- as.vector(mMatrix@data)
+unique(vector_ratings)
+table_ratings <- table(vector_ratings)
+table_ratings
+```
+
+```{r}
+vector_ratings <- vector_ratings[vector_ratings != 0]
+vector_ratings <- factor(vector_ratings)
+qplot(vector_ratings,fill = vector_ratings)+ ggtitle("Fig1: Distribution of ratings > 0")+theme_economist()
+```
+
+Observation 3: 
+
+- The range of ratings are from 0 to 5
+- With mostly in the 4 and 5 ranges
+
+------------------------------------------------------------------------------------------------------------------
+
+\clearpage
+
+## Data preparation
+
+- The sparcity of the matrix tell us that many movies have been viewed only a few times and their ratings maybe biased due to lack of data
+
+- Of those that rated a handful of movies, their ratings could be biased as well
+
+Because of these 2 reasons:
+
+- We will select the most relevant data and normalize the dataset by arbitarly picking:
+
+(1) user ratings with 100 movies or and movies that have been viewed at least 100 times
+
+(2) Top quantile movie viewers and movies viewed; top 2% percentile
+
+------------------------------------------------------------------------------------------------------------------
+
+\clearpage
+
+## Selecting the most relevant data
+
+```{r}
+
+#Data relevancy setting min thresholds of 100 respectively
+ratings_movies <- mMatrix[rowCounts(mMatrix) > 100,colCounts(mMatrix) > 100] 
+
+# Filtering on top quantile of movies viewed and movie viewers; in this case top 2 percent viewers and moives that were viewed
+min_movies <- quantile(rowCounts(ratings_movies), 0.98)
+min_users <- quantile(colCounts(ratings_movies), 0.98)
+
+#picking only the top 2% and see how their ratings looks like
+top_quantile_ratings_movies <-ratings_movies[rowCounts(ratings_movies) > min_movies,colCounts(ratings_movies) > min_users]
+top_quantile_ratings_per_user <- rowMeans(top_quantile_ratings_movies )
+
+#average ratings of relevant raters
+average_ratings_per_user <- rowMeans(ratings_movies )
+qplot(average_ratings_per_user,colour = "red") + stat_bin(binwidth = 0.1) + 
+ggtitle("Fig2a: Distribution of movies ratings & movies viewed > 100 times")+theme_economist()
+
+
+qplot(top_quantile_ratings_per_user,fill="yellow" ) + stat_bin(binwidth = .01) +
+ggtitle("Fig2b: Distribution of the top 2% percentile ratings per user")+theme_economist()
+```
+
+Observation 4: 
+
+- Even within a "selected" viewership, average ratings per viewer ranged from 0 to 5 with quite a std. Deviation
+- In addtion, average ratings per viewers were mostly in the 4 and 5 ranges (Fig2a)
+- The distribution of the top 2% viewers werer similarly ranged.  However, with far fewer raters but still between the same range of 4 to 5 (Fig2b)
+
+------------------------------------------------------------------------------------------------------------------
+
+\clearpage
+
+## Normalizing the data
+
+- Even after filtering on only the relevant viewers, one can see that high (or low) ratings may bias the results
+
+- In order to remove this effect, we had recommenderlab normalized the data in such as way that the average rating of each viewer is 0; the pre-built "normalize" function does it automatically
+
+
+```{r}
+#The prebuilt normalize function does it automatically
+# This is to "unbiased"  extremely low or high ratings by a few users
+ratings_movies_norm <- normalize(ratings_movies)
+avg <- round(rowMeans(ratings_movies_norm),5)
+table(avg)
+```
+
+## Here's a view of non-normalized vs. normalized datasets
+
+- Following the steps of Chp 3
+
+```{r}
+
+minItems <- quantile(rowCounts(ratings_movies), 0.95)
+minUsers <- quantile(colCounts(ratings_movies), 0.95)
+
+image(ratings_movies[rowCounts(ratings_movies) > minItems, 
+                 colCounts(ratings_movies) > minUsers],main = "Fig3a:Heatmap of relevant Users & Movies (Non-Normalized)")
+
+```
+
+```{r}
+image(ratings_movies_norm [rowCounts(ratings_movies_norm ) > minItems, 
+                 colCounts(ratings_movies_norm ) > minUsers], 
+      main = "Fig3b: Heatmap of relevant Users & Movies (Normalized)")
+```
+
+Observation 5: 
+
+The first difference is the colors, and this is because the data is continuous. Previously, the rating was an integer between 1 and 5. After the normalization, the rating can ranged between -5 and +5 
+
+------------------------------------------------------------------------------------------------------------------
+
+\clearpage
+
+## II: Item-Item Collaborative Filtering (IBCF)
+
+- Split the data set into training set 80% and testing set 20%.
+
+```{r}
+set.seed(1)
+which_train <- sample(x = c(TRUE, FALSE), size = nrow(ratings_movies),replace = TRUE, prob = c(0.8, 0.2))
+
+movieTrain <- ratings_movies[which_train, ]
+movieTest <- ratings_movies[!which_train, ]
+movieTrain
+movieTest
+```
+
+## Parameters of the IBCF method
+
+- K=30, is the number of similar items
+
+- Similarity Measure:  Jaccard Coefficient function
+
+- Training Recommenderlab for top 10 similar movies
+
+```{r}
+recc_model <-Recommender(movieTrain, method = "IBCF" ,parameter=list(normalize = "Z-score",method="Jaccard",k=30)) 
+
+model_details <- getModel(recc_model)$sim
+
+wMax <- order(colSums(model_details > 0), decreasing = TRUE)[1:10]
+
+topMovies <- as.data.frame(as.integer(rownames(model_details)[wMax]))
+colnames(topMovies) <- c("movie_id")
+
+
+data <- inner_join(topMovies,movies, by = "movie_id") %>% select(Movie = "title")
+
+kable(data , format = "pandoc", digits = 3,align= "l",caption = "Fig3a- IBCF: Top 10 movies that are similar to other moviess",font_size=12)
+
+```
+
+## Applying the recommender model on the test set
+
+- Predicting on Testing data set on top 10 similar movies
+
+```{r}
+n_recommended <- 10#number of reccomendations
+
+recc_predicted <- predict(object = recc_model, newdata = movieTest, n = n_recommended)
+recc_predicted
+
+```
+
+## Ratings by the 1st user (viewer)
+
+```{r}
+# Movie ratings of the first user
+user1 <- as.data.frame(movieTest@data[1,movieTest@data[1,]>0])
+colnames(user1) <- c("Rating")
+user1[c("movie_id")] <- as.integer(rownames(user1))
+data1 <- movies %>% inner_join(user1, by = "movie_id") %>% select(Movie = "title", Rating) %>%arrange(desc(Rating))
+
+kable(data1 , format = "pandoc", digits = 3,align= "l",caption = "Fig3b-Item_Item Filtering: Movies ratings of 1st viewer",font_size=12)
+```
+
+## Recommendation for the 1st Viewer
+
+```{r}
+# Recommendations for the first user
+recommended <- recc_predicted@itemLabels[recc_predicted@items[[1]]]
+recommended <- as.data.frame(as.integer(recommended))
+colnames(recommended) <- c("movie_id")
+data2 <- recommended %>% inner_join(movies, by = "movie_id") %>% select(Movie = "title")
+kable(data2 , format = "pandoc", digits = 3,align= "l",caption = "Fig3c-IBCF: : Movies recommended to 1st viewer",font_size=12)
+
+```
+
+Observation 6: 
+
+The Top 10 similar movies from training data set matches about 70% to the recommended Top 10 movies predicted on the test data set.  Not sure if this was "random luck" or the training went really well and was able to generalize to the testing data set?
+
+------------------------------------------------------------------------------------------------------------------
+
+\clearpage
+
+## III: User_User Collaborative Filtering (UBCF)
+
+- This has similar techniques as the Item_Item Filtering method
+- Identify which items are similar in terms of having been purchased by the same people:
+
+1) Measure how similar each user is to the new one. Like IBCF, popular
+similarity measures are correlation and cosine
+
+- Recommend to a new user the items that are similar to its purchases
+
+- Again, we used n=10 for top 10 recommendations for each new user
+
+```{r}
+(recc_model_UBCF <- Recommender(movieTrain, method = "UBCF",parameter=list(normalize ="Z-score",method="Jaccard",nn=10)))
+
+n_recommended1 <- 10
+recc_predicted_UBCF <- predict(object = recc_model_UBCF,newdata = movieTest, n = n_recommended1) 
+
+recc_predicted_UBCF
+
+```
+
+## Repeating the same process
+
+- Recommendations for the first user
+
+```{r}
+recommended2 <- recc_predicted_UBCF@itemLabels[recc_predicted_UBCF@items[[1]]]
+recommended2 <- as.data.frame(as.integer(recommended2))
+colnames(recommended2) <- c("movie_id")
+data4 <- recommended2 %>% inner_join(movies, by = "movie_id") %>% select(Movie = "title")
+
+kable(data4 , format = "pandoc", digits = 3,align= "l",caption = "Fig4-UBCF: Movies recommended to 1st viewer",font_size=12)
+
+```
+
+## Evalauation of IBCF vs. UBCF Filtering on ratings = 5
+
+- Split schema: 0.8/0.2 ratio
+
+```{r}
+xval_split <- evaluationScheme(ratings_movies, method = "split", train = 0.8,given=3,goodRating = 5)
+
+eval_prediction_IBCF_split <- predict(recc_model, getData(xval_split, "known"), type = "ratings")
+eval_prediction_UBCF_split <- predict(recc_model_UBCF, getData(xval_split, "known"), type = "ratings")
+
+err_eval_split <- rbind(
+  IBCF = calcPredictionAccuracy(eval_prediction_IBCF_split, getData(xval_split , "unknown")),
+  UBCF = calcPredictionAccuracy(eval_prediction_UBCF_split , getData(xval_split , "unknown")))
+
+err_eval_split
+```
+
+- Cross Validaton schema of k-folds = 5
+
+```{r}
+xval_kfold <- evaluationScheme(ratings_movies, method = "cross-validation", k=5,given=15,goodRating = 5)
+
+eval_prediction_IBCF <- predict(recc_model, getData(xval_kfold , "known"), type = "ratings")
+eval_prediction_UBCF <- predict(recc_model_UBCF, getData(xval_kfold , "known"), type = "ratings")
+
+err_eval <- rbind(
+  IBCF = calcPredictionAccuracy(eval_prediction_IBCF , getData(xval_kfold , "unknown")),
+  UBCF = calcPredictionAccuracy(eval_prediction_UBCF  , getData(xval_kfold , "unknown")))
+
+err_eval
+```
+
+------------------------------------------------------------------------------------------------------------------
+
+\clearpage
+
+# Summary of Results
+
+```
+This project focused on collaborative filtering because its one of the most basic and popular techniques of recommendation systems.  Also, its the only one that is supported by recommendrlab which makes it very convenient for beginners like myself to learn about the technique via its pre-built functionalities.  The project followed very closely the spirit of chp 3 in the book: "BUILDING_A_RECOMMENDATION_SYSTEM_WITH_R".
+
+The data preparation process converted a highly sparse matrix to a more palatable "compact and dense" matrix by filtering only on the relevant data subset of viewers and rated movies greater than 100 times.  This was followed by normalization which made the ratings less biased.  
+
+Item Based Collabortive Filtering (IBCF):
+
+- Training on IBCF was based on a 80/20 split ratio
+- Recommender Model were based on K=30 (similar items), Jaccard similarity function and normalized on z-scores
+- For first viewer only, the Top 10 similar movies matches quite well (70%) with the predicted (recommended) movies in the test set
+-Based on ratings of 5, the overall RSME using split ratio of 80/20 and K-fold of 5 were 1.38 & 1.35 respectively
+
+User Based Collabortive Filtering (UBCF):
+
+- Training on IBCF was based on a 80/20 split ratio
+- Recommender Model were based on K=30 (similar items), Jaccard similarity function and normalized on z-scores
+- For first viewer only, the Top 10 movies predicted (recommended) were nothing like in the training set 
+-Based on ratings of 5, the overall RSME using split ratio of 80/20 and K-fold of 5 were 1.10 & 0.98 respectively
+
+```
+------------------------------------------------------------------------------------------------------------------
+
+\clearpage
+
+# Conclusion
+
+This project followed the steps as prescribe from chp 3 in the book.  Recommenderlab was a really handy tool to visualize the inner workings of the IBCF and UBCF techniques. In this instance, the overall RSME in UBCF was better than IBCF but it's worth to expand on this and perform addtional work to see if that kind of generialization is the case. Therefore, it is important to note that this is a learning exercise. More development and testing would be needed to really ascertain the reliability of the recommended results.
+
+
+
+
+
