@@ -1,0 +1,368 @@
+---
+title: "DAT 612 - Proj 4: Evaluating Recommender Systems"
+author: "sufian"
+date: "6/27/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Loading Libraries
+
+```{r,message=FALSE, warning=FALSE}
+library(Matrix)
+library(reshape2)
+library(data.table)
+library(tidyr)
+library(dplyr)
+library(kableExtra)
+library("scales")
+library("recommenderlab")
+library(tidytext)
+library(psych)
+library(knitr)
+library(ggplot2)
+require(ggthemes)
+```
+
+# Loading Data from built-in Database of Recommenderlab
+
+- Using the Jester5K database this time
+
+- Per Chapter 3 of the book: "Building a Recommendation Systems"
+
+```{r}
+data(Jester5k)
+Jester5k
+```
+
+# Selecting only relevant data sets
+
+- Users having rated more than 50 times
+- Jokes getting rated more than 100 times
+
+```{r}
+ratings <- Jester5k[rowCounts(Jester5k) > 50, colCounts(Jester5k) > 100]
+ratings
+```
+
+# Parameters of the evaluation
+
+```{r}
+items_to_keep <- 15 # using the book's recommendation
+rating_threshold <- 5# min rating threshold of jokes considered good (range: 0-10)
+```
+
+# K-fold method
+
+```{r}
+set.seed(123)
+n_fold <- 5
+eval_sets <- evaluationScheme(data = ratings, method = "cross-validation", k = n_fold, given = items_to_keep, goodRating = rating_threshold)
+
+getData(eval_sets, "train")
+getData(eval_sets, "known")
+getData(eval_sets, "unknown")
+```
+
+# Building the IBCF Model
+
+```{r}
+model_to_evaluate_IBCF <- "IBCF"
+model_parameters_IBCF <- NULL
+
+eval_recommender_IBCF <- Recommender(data = getData(eval_sets, "train"),method = model_to_evaluate_IBCF, parameter = model_parameters_IBCF)
+
+items_to_recommend <- 10
+
+eval_prediction_IBCF <- predict(object = eval_recommender_IBCF, newdata =
+getData(eval_sets, "known"), n = items_to_recommend, type = "ratings")
+
+```
+
+# Building the UBCF Model
+
+```{r}
+model_to_evaluate_UBCF <- "UBCF"
+model_parameters_UBCF <- NULL
+
+eval_recommender_UBCF <- Recommender(data = getData(eval_sets, "train"),method = model_to_evaluate_UBCF, parameter = model_parameters_UBCF)
+
+items_to_recommend <- 10
+
+eval_prediction_UBCF <- predict(object = eval_recommender_UBCF, newdata =
+getData(eval_sets, "known"), n = items_to_recommend, type = "ratings")
+```
+
+# Building the SVD Model
+
+```{r}
+model_to_evaluate_SVD <- "SVD"
+model_parameters_SVD <- NULL
+
+eval_recommender_SVD <- Recommender(data = getData(eval_sets, "train"),method = model_to_evaluate_SVD, parameter = model_parameters_SVD)
+
+items_to_recommend <- 10
+
+eval_prediction_SVD <- predict(object = eval_recommender_SVD, newdata =
+getData(eval_sets, "known"), n = items_to_recommend, type = "ratings")
+```
+
+
+# Comparing RSME of ratings
+
+- RSMEs of the 3 algorithms
+
+```{r}
+# RSMEs of the 3 algorithms
+eval_accuracy_IBCF <- calcPredictionAccuracy( x = eval_prediction_IBCF, data = getData(eval_sets, "unknown"), byUser =FALSE)
+
+eval_accuracy_UBCF <- calcPredictionAccuracy( x = eval_prediction_UBCF, data = getData(eval_sets, "unknown"), byUser =FALSE)
+
+eval_accuracy_SVD <- calcPredictionAccuracy( x = eval_prediction_SVD, data = getData(eval_sets, "unknown"), byUser =FALSE)
+
+#comparing the 3 together
+accuracy <- rbind(eval_accuracy_IBCF , eval_accuracy_UBCF )
+accuracy <- rbind(accuracy, eval_accuracy_SVD)
+rownames(accuracy) <- c("IBCF", "UBCF", "SVD")
+knitr::kable(accuracy, format = "html" ,caption = "Table 1: Acurracy Metrics of the 3 Models") %>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+------------------------------------------------------------------------------------------------------------------
+
+\clearpage
+
+Observation 1:
+
+- The RSMEs of the ratings for UBCF and SVD were better than IBCF overall.  Although, UBCF and SVD were quite similar
+
+------------------------------------------------------------------------------------------------------------------
+
+\clearpage
+
+# Distribution of the rating's RSME per Algorithm
+
+```{r}
+#Chart of IBCF RSME
+eval_accuracy_IBCF <- calcPredictionAccuracy( x = eval_prediction_IBCF, data = getData(eval_sets, "unknown"), byUser =TRUE)
+qplot(eval_accuracy_IBCF[, "RMSE"],color="orange") + geom_histogram(binwidth = .5) +ggtitle("Fig1a: Distribution of the IBCF's RMSE (k-fold=5)")+theme_economist()
+
+#Chart of UBCF RSME
+eval_accuracy_UBCF <- calcPredictionAccuracy( x = eval_prediction_UBCF, data = getData(eval_sets, "unknown"), byUser =TRUE)
+qplot(eval_accuracy_UBCF[, "RMSE"],color="orange") + geom_histogram(binwidth = .5) +ggtitle("Fig1b: Distribution of the UBCF's RMSE (k-fold=5)")+theme_economist()
+
+#Chart of SVD RSME
+eval_accuracy_SVD <- calcPredictionAccuracy( x = eval_prediction_SVD, data = getData(eval_sets, "unknown"), byUser =TRUE)
+qplot(eval_accuracy_SVD[, "RMSE"],color="orange") + geom_histogram(binwidth = .5) +ggtitle("Fig1c: Distribution of the SVD's RMSE (k-fold=5)")+theme_economist()
+
+```
+
+------------------------------------------------------------------------------------------------------------------
+
+\clearpage
+
+Observation 2:
+
+- The RSME SVD is the most normally distrubted, followed by IBCF while UBCF exhibited right-skewness with abit of a long tail
+
+------------------------------------------------------------------------------------------------------------------
+
+\clearpage
+
+# Evaluating the recommendations
+
+- Confusion Matrix
+
+- Accounting all the splits at the same time
+
+- n: Is the number of jokes to recommend to each user; depending on range of n, we can visualize the performance of recommender system
+
+
+```{r}
+columns_to_sum <- c("TP", "FP", "FN", "TN")
+#confusion matrix for IBCF
+results_IBCF <- evaluate(x = eval_sets, method = model_to_evaluate_IBCF, n =seq(10, 100, 10))
+indices_summed_IBCF <- Reduce("+", getConfusionMatrix(results_IBCF))[, columns_to_sum]
+knitr::kable(indices_summed_IBCF , format = "html",caption = "Table 2a: Confusion Matrix of IBCF") %>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover"))
+#confusion matrix for UBCF
+results_UBCF <- evaluate(x = eval_sets, method = model_to_evaluate_UBCF, n =seq(10, 100, 10))
+indices_summed_UBCF <- Reduce("+", getConfusionMatrix(results_UBCF))[, columns_to_sum]
+knitr::kable(indices_summed_UBCF , format = "html",caption = "Table 2b: Confusion Matrix of UBCF") %>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover"))
+#confusion matrix for SVD
+results_SVD <- evaluate(x = eval_sets, method = model_to_evaluate_SVD, n =seq(10, 100, 10))
+indices_summed_SVD <- Reduce("+", getConfusionMatrix(results_SVD))[, columns_to_sum]
+knitr::kable(indices_summed_SVD  , format = "html",caption = "Table 2c: Confusion Matrix of SVD") %>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+# Overall Model performance
+
+```{r}
+#creating a list of models to try out
+models<-list(
+  IBCF=list(name="IBCF",param=list(method="cosine")),
+  UBCF=list(name="UBCF",param=list(method="cosine")),
+  SVD=list(name="SVD",param = list(k = 20))) # randomly pick 20 to truncate the SVD model
+
+nRecommendations<-c(1,5,seq(10,90,10))
+results<-evaluate(x=eval_sets,method = models,n=nRecommendations)
+
+```
+
+# ROC curve
+
+```{r}
+par(bg="lightgray")
+plot(results, annotate = TRUE ,type="l",legend = "bottomright")
+title( "Fig2a: ROC curves")
+```
+
+# Precision-Recall plot
+
+```{r}
+par(bg="lightgray")
+plot(results, "prec/rec", annotate = TRUE,type="l",legend = "bottomright")
+title( "Fig 2b:Precision-recall")
+
+```
+
+------------------------------------------------------------------------------------------------------------------
+
+\clearpage
+
+Observation 3:
+
+- Although the confusion matrices for different ranges of n (# of items recommended) in Table 2 provided details of the evaluation, a better approach was to plot the ROC and Precision-recall curves.  The curves of Fig2a and Fig2b allowed the analyst to quickly tell which model provided more accurate classifications. In Fig2a, the UBCF and SVD curves exhibited more "arching" from the 45 degree diagonal line; this meant models UBCF & SVD contained more True Positives than False Positives relative to model IBCF. 
+
+- The IBCF curve in this case is also called the base line curve as it's plotted at almost a 45 degree angle diagonally.  The AUC is 0.5 and the analogy is it's no better than flipping a coin classifier.  
+
+- Both Fig2a and Fig2b showed UBCF to be the superior model which was consistent with calculations of the RSMEs.  UBCF had the lowest RSME of the 3 models.
+
+------------------------------------------------------------------------------------------------------------------
+
+\clearpage
+
+# Diversity
+
+- To increase diversity, took items with poor reviews and forced it to show up in the recommender’s results
+
+- Changed 10% of the ratings at 1 and below and making it to be 5 (our so-called good rating)
+
+```{r}
+matrix<-as(ratings,"matrix")
+lowRatingsInd<-(which(matrix< 1,arr.ind = TRUE)) #take jokes with poor ratings of 1
+#changed mix of ratings by 10% wih ratings below 1
+lowRatingsIndchangeSize<-round(length(lowRatingsInd)*0.1,0)
+lowRatingsIndToChange<-round(sample(1:length(lowRatingsInd)/2,lowRatingsIndchangeSize),0)
+
+for(i in 1:length(lowRatingsIndToChange)) {
+  matrix[lowRatingsInd[lowRatingsIndToChange[i],1],lowRatingsInd[lowRatingsIndToChange[i],2]]<-5 #make ratings 1 to be ratings of 5
+}
+
+dataDiversity <- as(as.matrix(matrix), "realRatingMatrix")
+```
+
+# Repeat as before, K-fold cross validation
+
+```{r}
+eval_sets_diversity <- evaluationScheme(data = dataDiversity , method = "cross-validation", k = n_fold, given = items_to_keep, goodRating = 5)#still considering 5 to be "good" ratings
+```
+
+# Using UBCF Model only
+
+- Using UBCF because it was shown to be most accurate model, see above
+
+```{r}
+model_to_evaluate_UBCF <- "UBCF"
+model_parameters_UBCF <- NULL
+
+eval_recommender_UBCF_diversity <- Recommender(data = getData(eval_sets_diversity , "train"),method = model_to_evaluate_UBCF, parameter = model_parameters_UBCF)
+
+items_to_recommend <- 10
+
+eval_prediction_UBCF_diversity  <- predict(object = eval_recommender_UBCF_diversity, newdata =
+getData(eval_sets_diversity , "known"), n = items_to_recommend, type = "ratings")
+
+evalAccuracy_diversity<-calcPredictionAccuracy(x=eval_prediction_UBCF_diversity,data=getData(eval_sets_diversity,"unknown"),byUser=FALSE)
+#RSME of ratings with more diversity in ratings mix
+print("Accuracy metrics of Data with diversity included:")
+evalAccuracy_diversity
+
+```
+
+
+```{r}
+models11<-list(
+
+  UBCF=list(name="UBCF",param=list(method="cosine")))
+
+nRecommendations<-c(1,5,seq(10,90,10))
+results11<-evaluate(x=eval_sets_diversity,method = models11,n=nRecommendations)
+#plot the ROC-AUC curve
+par(bg="lightgray")
+plot(results11, annotate = TRUE ,type="l",legend = "topleft",col ="red")
+title( "Fig2c: ROC curve of Data set with Diversity")
+```
+
+
+
+------------------------------------------------------------------------------------------------------------------
+
+\clearpage
+
+Observation 4:
+
+- Added the lowest ratings of 1 at 10% mix to the original data set; this resulted in the RSME increasing to 4.7%.
+
+- The RMSE degraded when diversity was introduced into the original "refined" data set.  However on the other hand, inclusion of more diverse items is be a good thing as it's more realistic depiction of datasets in the real world.
+
+------------------------------------------------------------------------------------------------------------------
+
+\clearpage
+
+# Summary
+
+```
+Again for this project, the evaluation steps were procedurally performed per Chapter 4 of the book.  K-fold validation was the accuracy evaluation of choice as it ensured that all sections of the dataset were trained and tested.  It also made for a more complete test harness as all data points were accounted for.  Parameters of K-fold and min. threshold ratings of 5 were selected for this project and 3 models were used as test cases:
+
+1) IBCF Model
+
+2) UBCF Model
+
+3) SVD Model
+
+The UBCF Model was found to be the most superior of the 3 with better RSME, ROC and Precision-Recall curves.  When diversity of lower ratings were thrown into the mix, RSME degraded slightly, ROC curve of Fig 2c, showed curve flattening post-diversity inclusion. 
+
+```
+------------------------------------------------------------------------------------------------------------------
+
+\clearpage
+
+# Conclusion
+
+While the above evaluation techniques have proven itself well acadamically on an off-line basis because of its measurebility.  For instance it's easy to compute RSME.  When one goes into production online, other measures becomes more critical[1].  From a business perspective, Click-Thru-Rate (CTR) and Conversion Rate (CR) are more in tune with business' bottom-lines.  In my A/B testing, I would use these 2 metrics in tandem, meaning monitoring my CTRs and CRs concurrently.  CTRs shows traffic while CR show conversion of those traffic in business dollars.  In other words, conversion rate = number of recommendations that made both your boss and your user happy!
+
+Furthermore, one of the quick strategy to improve the evaluation environment is to use the right training data in the design phase; 2 things that can be done to improve the on-line training data that could quickly improve a recommender system[2]:
+
+- Remove popular items from the training data. (This is appropriate in cases where users can discover these items on their own, and may not find these recommendations useful)
+
+- Scale item ratings by the user’s value, such as average transaction value. This can help a model learn to recommend items that lead to loyal or high-value customers.
+
+------------------------------------------------------------------------------------------------------------------
+
+\clearpage
+
+References:
+
+(1) https://medium.com/recombee-blog/evaluating-recommender-systems-choosing-the-best-one-for-your-business-c688ab781a35
+
+(2) https://towardsdatascience.com/evaluation-metrics-for-recommender-systems-df56c6611093
+
+
