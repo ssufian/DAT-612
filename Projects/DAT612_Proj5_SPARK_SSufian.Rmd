@@ -56,7 +56,7 @@ ratings
 
 ```{r}
 items_to_keep <- 15 # using the book's recommendation
-rating_threshold <- 5# min rating threshold of jokes considered good (range: 0-10)
+rating_threshold <- 3# min rating threshold of ratings considered good (range: 1-5)
 ```
 
 # Split Method
@@ -155,7 +155,6 @@ Observation 2:
 
 ```{r,message=FALSE, warning=FALSE}
 spset_start <- proc.time()
-options(java.parameters = "-Xmx8000m")
 library(sparklyr)
 # installed local version of Spark
 #spark_install()
@@ -199,13 +198,13 @@ moviename $itemid <- as.integer(moviename$itemid)
 #changing itemid column name back to "item" only for Spark to work
 moviesdata <- moviename%>% rename(item= itemid)
 
-dim(moviesdata)
 ```
 
 #Creating Spark Data frame
 
 ```{r}
 spmovies <- sdf_copy_to(sc, moviesdata, "spmovies",overwrite=T)
+
 src_tbls(sc)#checking to see if spark data frame was created
 ```
 
@@ -214,10 +213,11 @@ spset_end <- proc.time()
 spset_end - spset_start
 ```
 
-#Spark Dataframe
+#Spark Dataframes
 
 ```{r}
 head(spmovies)
+
 ```
 
 # Split Method
@@ -227,10 +227,10 @@ head(spmovies)
 - Building Model in Spark
 
 ```{r}
-partitions <- spmovies %>%sdf_random_split(training = 0.8, test = 0.2, seed = 123)
+partitions <- spmovies %>%sdf_random_split(training = 0.8, testing = 0.2)
 #training and testing data sets
-spmovies_training <- partitions$training
-spmovies_testing <- partitions$test
+spmovies_training <- (partitions$training)
+spmovies_testing<- (partitions$testing)
 #Build model
 tic()
 model <- ml_als(spmovies_training, max_iter = 5, nonnegative = TRUE, rating_col = "rating", user_col = "user", item_col = "item")
@@ -239,7 +239,7 @@ train_time <- round(t$toc - t$tic, 2)
 
 #Running the prediction
 tic()
-sparkPred <- model$.jobj %>%invoke("transform", spark_dataframe(spmovies_testing )) %>%collect()
+sparkPred <- ml_transform(model,spmovies_testing) %>%collect()
 predict_time<- round(t$toc - t$tic, 2)
 # Remove NaN due to data set splitting
 sparkPred <- sparkPred[!is.na(sparkPred$prediction), ] 
@@ -288,7 +288,7 @@ knitr::kable(timing, format = "html", row.names = FALSE) %>%
 Summary of Findings:
 
 ```
-Overall, the accuracy metrics were better in Spark than in Recommenderlabs.  However, the training and predicting times were worst off than regular R; which was unexpected.
+Overall, the accuracy metrics were better in Spark than in Recommenderlabs.  However, the training and predicting times were worst off than regular R; which was unexpected.  This lasting finding is really strange as Spark would've definitely provided a better computational performance over Regular R with all it's vaunted distributed computing power.  As noted, Spark was re-run just to validate the first run was not a "fluke".  As a result, further testing and validation is needed to understand this abnormality.
 
 ```
 
