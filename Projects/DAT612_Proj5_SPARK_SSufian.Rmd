@@ -1,0 +1,295 @@
+---
+title: "DAT 612 - Proj 5: SparklyR Exercise"
+author: "sufian"
+date: "6/27/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Loading Libraries
+
+```{r,message=FALSE, warning=FALSE}
+library(Matrix)
+library(reshape2)
+library(data.table)
+library(tidyr)
+library(dplyr)
+library(kableExtra)
+library("scales")
+library("recommenderlab")
+library(tidytext)
+library(psych)
+library(knitr)
+library(ggplot2)
+require(ggthemes)
+library(tictoc)
+library(stringr)
+
+suppressWarnings(suppressMessages(library(recommenderlab)))
+```
+
+# Loading Data from built-in Database of Recommenderlab
+
+- Using the Movielens database this time
+
+- Per Chapter 3 of the book: "Building a Recommendation Systems"
+
+```{r}
+data(MovieLense)
+MovieLense
+```
+
+# Selecting only relevant data sets
+
+- Users having rated more than 50 times
+- Movies getting rated more than 100 times
+
+```{r}
+ratings <- MovieLense[rowCounts(MovieLense) > 50, colCounts(MovieLense) > 100]
+ratings
+```
+
+# Parameters of the evaluation
+
+```{r}
+items_to_keep <- 15 # using the book's recommendation
+rating_threshold <- 5# min rating threshold of jokes considered good (range: 0-10)
+```
+
+# Split Method
+
+- Schema:  80/20 split
+
+```{r}
+set.seed(123)
+percentage_training <- 0.8
+n_eval <- 1
+
+eval_sets <- evaluationScheme(data = ratings, method = "split",
+train = percentage_training, given = items_to_keep, goodRating =
+rating_threshold, k = n_eval) 
+
+getData(eval_sets, "train")
+getData(eval_sets, "known")
+getData(eval_sets, "unknown")
+
+# Set up data frame for timing of training and prediction
+timing <- data.frame(Model = factor(), Training = double(), Predicting = double())
+```
+
+# Building the ALS Model in regular R
+
+```{r}
+model_to_evaluate_ALS<- "ALS" #method name
+model_parameters_ALS <- NULL
+#start timing for training
+tic() 
+eval_recommender_ALS <- Recommender(data = getData(eval_sets, "train"),method = model_to_evaluate_ALS, parameter = model_parameters_ALS)
+t <-toc(quiet=TRUE)
+train_time <- round(t$toc - t$tic, 2)
+
+items_to_recommend <- 10
+#start timing for prediction
+tic() 
+eval_prediction_ALS <- predict(object = eval_recommender_ALS, newdata =
+getData(eval_sets, "known"), n = items_to_recommend, type = "ratings")
+predict_time <- round(t$toc - t$tic, 2)
+
+#Setting up timing
+timing <- data.frame(Method="Regular R: Recomenderlab", data.frame(Model=as.factor(model_to_evaluate_ALS), Training=as.double(train_time),Predicting=as.double(predict_time)))
+```
+
+
+# RSME of rating
+
+- RSME of the the ALS algorithm
+
+```{r}
+# RSMEs of the algorithm
+
+eval_accuracy_ALS<- calcPredictionAccuracy( x = eval_prediction_ALS, data = getData(eval_sets, "unknown"), byUser =FALSE)
+
+#listing the RSME
+accuracy <- eval_accuracy_ALS
+accuracy 
+```
+
+------------------------------------------------------------------------------------------------------------------
+
+\clearpage
+
+# Distribution of the rating's RSME 
+
+```{r}
+#Chart of SVD RSME
+eval_accuracy_ALS  <- calcPredictionAccuracy( x = eval_prediction_ALS , data = getData(eval_sets, "unknown"), byUser =TRUE)
+qplot(eval_accuracy_ALS[, "RMSE"],color="orange") + geom_histogram(binwidth = .09) +ggtitle("Fig1: Distribution of the ALS's RMSE (80/20 split)")+theme_economist()
+
+```
+
+------------------------------------------------------------------------------------------------------------------
+
+\clearpage
+
+Observation 2:
+
+- The RSME ALS is the mostly normally distributed with a slight right skewness
+
+------------------------------------------------------------------------------------------------------------------
+
+\clearpage
+
+
+# SPARK
+
+- Below is to repeat the same exercise as above but in SPARK environment and compare performances
+
+- Created a Spark Connection to link master / local node to Spark environment and invoked the sparklyR library
+
+------------------------------------------------------------------------------------------------------------------
+
+\clearpage
+
+```{r,message=FALSE, warning=FALSE}
+spset_start <- proc.time()
+options(java.parameters = "-Xmx8000m")
+library(sparklyr)
+# installed local version of Spark
+#spark_install()
+```
+
+```{r,message=FALSE, warning=FALSE}
+#SparkR::sparkR.session()
+sc <- spark_connect(master = "local")
+```
+
+```{r}
+# Check the version of Spark
+spark_version(sc)
+```
+
+# Data preparation in SparklyR
+
+- Converting ratings to a data frame
+
+```{r}
+movies <- as(ratings, "data.frame")
+dim(movies)
+
+movies <- transform(movies, itemid = as.integer(factor(item)))
+colnames(movies) <- c("user", "item", "rating", "itemid")
+dim(movies)
+
+```
+
+# Data Wrangling in SparklyR 
+
+- Making sure the format can be fed into SparklyR 
+
+```{r}
+#Creating table of only user, ratings and itemid
+moviename <- movies %>% select(user,rating, itemid)%>% distinct(user,rating, itemid)
+#need to convert columns to integer for Spark
+moviename $user <- as.integer(moviename$user)
+moviename $itemid <- as.integer(moviename$itemid)
+
+#changing itemid column name back to "item" only for Spark to work
+moviesdata <- moviename%>% rename(item= itemid)
+
+dim(moviesdata)
+```
+
+#Creating Spark Data frame
+
+```{r}
+spmovies <- sdf_copy_to(sc, moviesdata, "spmovies",overwrite=T)
+src_tbls(sc)#checking to see if spark data frame was created
+```
+
+```{r}
+spset_end <- proc.time()
+spset_end - spset_start
+```
+
+#Spark Dataframe
+
+```{r}
+head(spmovies)
+```
+
+# Split Method
+
+- Partitioning the data sets into 80/20 split ratio
+
+- Building Model in Spark
+
+```{r}
+partitions <- spmovies %>%sdf_random_split(training = 0.8, test = 0.2, seed = 123)
+#training and testing data sets
+spmovies_training <- partitions$training
+spmovies_testing <- partitions$test
+#Build model
+tic()
+model <- ml_als(spmovies_training, max_iter = 5, nonnegative = TRUE, rating_col = "rating", user_col = "user", item_col = "item")
+t <-toc(quiet=TRUE)
+train_time <- round(t$toc - t$tic, 2)
+
+#Running the prediction
+tic()
+sparkPred <- model$.jobj %>%invoke("transform", spark_dataframe(spmovies_testing )) %>%collect()
+predict_time<- round(t$toc - t$tic, 2)
+# Remove NaN due to data set splitting
+sparkPred <- sparkPred[!is.na(sparkPred$prediction), ] 
+# Model Name: ml_als
+model_to_evaluate_ALS_SP="ml_ALS"
+timing <- rbind(timing, data.frame(Method="Spark",Model=as.factor(model_to_evaluate_ALS_SP), 
+                                   Training=as.double(train_time), 
+                                   Predicting=as.double(predict_time)))
+```
+
+# Acurracy Metrics in SPARK
+
+```{r}
+# Calculate errors in Spark 
+mseSpark <- mean((sparkPred$rating - sparkPred$prediction)^2)
+rmseSpark <- sqrt(mseSpark)
+maeSpark <- mean(abs(sparkPred$rating - sparkPred$prediction))
+
+# Disconnect Spark
+spark_disconnect(sc)
+```
+
+# Performance Analysis
+
+- Comparing accuracy between regular R vs. SparklyR environments
+
+```{r}
+accuracy <- rbind(accuracy, data.frame(RMSE = rmseSpark, MSE = mseSpark, MAE = maeSpark))
+
+rownames(accuracy) <- c("Recommenderlab ALS", "Spark ALS")
+knitr::kable(accuracy, format = "html") %>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+- Comparing computational speed between regular R vs. SparklyR environments
+
+```{r}
+knitr::kable(timing, format = "html", row.names = FALSE) %>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+------------------------------------------------------------------------------------------------------------------
+
+\clearpage
+
+Summary of Findings:
+
+```
+Overall, the accuracy metrics were better in Spark than in Recommenderlabs.  However, the training and predicting times were worst off than regular R; which was unexpected.
+
+```
+
+
