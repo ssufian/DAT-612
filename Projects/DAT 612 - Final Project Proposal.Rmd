@@ -5,15 +5,17 @@ date: "7/5/2020"
 output: html_document
 ---
 
-# Introduction
+# Project Scope and Description
 
 ------------------------------------------------------------------------------------------------------------------
 
 \clearpage
 
+The Final project will rely more on python packages and libraries instead of R's much-vaunted Recommenderlabs mainly to learn more about other packages besides R's Recommenderlabs package. In addition, this provide an opportunity to discover and learn if there are other all-in-one packages similarly as powerful as Recommenderlabs. 
+
 The goal is to evaluate and create an end-to-end recommender system against yet to be determined datasets (probably the movielens data set if time is too constrained) and determine to which algorithms produce the best predictive models.
 
-To that end, the project will attempt multiple recommenders libraries to determine which is most effective. And within data analysis; comparisons of accuracy metrics like RSMEs, ROC and Precision-to-Recall cureves will be utilized to determine which ones produces the best result.  The traditional IBCF and UBCF methods will be implemented and tested for accuracies and performance against Python’s Scikit-Learn packaged KNN and SVD algorithms. In addition (time permits), a Spark-based Alternating least squares (ALS) algorithm will also be added to see if performance could be improved in the Spark environment. 
+To that end, the project will attempt multiple recommenders libraries to determine which is most effective. And within data analysis; comparisons of accuracy metrics like RSMEs, ROC and Precision-to-Recall curves will be utilized to determine which ones produces the best result.  The traditional IBCF & UBCF methods will be implemented and tested for accuracies and performance against Python’s Scikit-Learn packaged Turicriate & Surprise packages. In addition (time permits), a Spark-based Alternating least squares (ALS) algorithm will also be added to see if performance could be improved in the Spark environment. 
 
 The following steps will be applied throughout the project:
 
@@ -21,7 +23,7 @@ The following steps will be applied throughout the project:
 - Hyper-parameter tuning via cross-validation
 - Implement the different algorithms/models 
 - Comparing accuracy across the datasets per the different algorithms
-- Predictive accuracies will rely on Root mean squared error (RMSE), Mean square error (MSE) and Mean absolute error (MAE). Comparative analysis will be use to determine which models gives the best results via learning/accuracy curves and computational speeds.
+- Predictive accuracies will rely on Root mean squared error (RMSE). Comparative analysis will be use to determine which models gives the best results via learning/accuracy curves and computational speeds.
 
 ------------------------------------------------------------------------------------------------------------------
 
@@ -35,13 +37,13 @@ The following steps will be applied throughout the project:
 
 # ETLs
 
-Step 1: We will first import the dataset from GitHub, clean the datasets, and perform data exploration. Statistical and visual will be included.
+Step 1: We will first import the dataset from GitHub, clean the datasets, and perform standard data exploration via Statistical and visualizations.
 
 Step 2/3: Transform and/or combine the datasets for further analysis if necessary before splitting it into training and testing sets. Finally, when data is deem "cleaned", it will be loaded either into Python or R.
 
-Step 4: Introduced and implement the User-Based Collaborative Filtering (UBCF), Item-Based Collaborative Filtering (IBCF), Singular Value Decomposition (SVD), and KNN algorithms with different parameters (e.g. similarity methods, normalization techniques).
+Step 4: Introduced and implement the User-Based Collaborative Filtering (UBCF), Item-Based Collaborative Filtering (IBCF), Singular Value Decomposition (SVD), and other algorithms with different parameters (e.g. similarity methods, normalization techniques) from the python packages
 
-Step5: Evaluate the model performance and accuracy using the metrics RMSE, MAE, MSE, ROC Curve/AUC, and Precision-Recall.  These metrics will in turn guide in the final recommender system to be build for production; model with the best overall accuracy and computational performance.
+Step5: Evaluate the model performance and accuracy using the metrics RMSE and Precision-Recall.  These metrics will in turn guide in the final recommender system to be build for production; model with the best overall accuracy and computational performance.
 
 ------------------------------------------------------------------------------------------------------------------
 
